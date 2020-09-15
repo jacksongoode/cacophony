@@ -12,6 +12,13 @@ from selenium.common.exceptions import StaleElementReferenceException
 from selenium.common.exceptions import WebDriverException
 from selenium.common.exceptions import NoSuchWindowException
 
+"""
+To do:
+    - Add views to scraper
+    - Check for new links if on same page (scrolling down for new content) 
+    - Merge deault profile?
+"""
+
 prof_path = "/Users/jacksongoode/Library/Application Support/Firefox/Profiles/rqfiwwkd.Selenium"
 profile = FirefoxProfile(prof_path)
 profile.set_preference("extensions.lastAppBuildId", "<apppID> -1 ") # workaround for extenion bug

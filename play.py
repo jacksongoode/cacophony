@@ -1,5 +1,6 @@
 from __future__ import unicode_literals
 import os
+import io
 import sys
 import random
 import subprocess
@@ -7,14 +8,15 @@ import multiprocessing as mp
 import time
 import math
 import argparse
+import tempfile
 
 import orjson
 import youtube_dl
 from youtube_dl.utils import DownloadError
 from pyo import *
-# from sr import audio2text
+from sr import audio2text
 
-def download_media(link, i, min_dur, max_dur):
+def download_media(link, i, min_dur, max_dur, temp_dir):
     yt_url = link
     cur_dur = random.randint(min_dur, max_dur)
 
@@ -22,7 +24,8 @@ def download_media(link, i, min_dur, max_dur):
     # start_time = time.time()
     # time_list.append(start_time + total_dur)
 
-    output = 'sounds/sound_%s.flac' % str(i)
+    # output = 'sounds/sound_%s.flac' % i
+    output = tempfile.NamedTemporaryFile(suffix='.flac', dir=temp_dir.name, delete=False)
 
     ydl_opts = {
         'format': 'best',
@@ -49,7 +52,7 @@ def download_media(link, i, min_dur, max_dur):
         return # should return with new link
 
     # print("Downloading video '%s', starting at %ss for %ss" %(yt_url.split('v=')[-1], cur_start, cur_dur))
-    # * ffmpeg -ss 60 -i $(youtube-dl -x -g 'https://www.youtube.com/watch?v=LzsldXHY2u8') -map 0:a -t 25 -y test.flac  
+    # recreates: ffmpeg -ss 60 -i $(youtube-dl -x -g 'https://www.youtube.com/watch?v=LzsldXHY2u8') -map 0:a -t 25 -y test.flac  
     command = [
         'resources/ffmpeg',
         '-hide_banner',
@@ -60,12 +63,18 @@ def download_media(link, i, min_dur, max_dur):
         '-map', '0:a',
         '-af', 'aformat=s16:44100',
         '-y',
-        output]
+        output.name]
     subprocess.call(command)
 
+    # print('Output %s' % output.name)
+    # print('Size %s' % os.stat(output.name).st_size)
     return output, cur_dur
 
 def choose_media(link_dict, player_num, min_dur, max_dur, q_dl, q_pyo):
+    
+    temp_dir = tempfile.TemporaryDirectory()
+    old_files = []
+
     for i in range(len(link_dict)):
         # Choose random link then delete it
         rnd_link = random.choice(list(link_dict.items()))
@@ -75,29 +84,21 @@ def choose_media(link_dict, player_num, min_dur, max_dur, q_dl, q_pyo):
         visited = rnd_link[1][1]
 
         try:
-            output, cur_dur = download_media(rnd_link[0], i, min_dur, max_dur)
+            output, cur_dur = download_media(rnd_link[0], i, min_dur, max_dur, temp_dir)
         except Exception as e:
             print('Bad link...')
             continue
         
         player = random.randint(0, player_num - 1)
-        q_dl.put((output, seen, visited, player)) # name, seen count, visited (url), player to use
-        # audio2text(output)
+        q_dl.put((output.name, seen, visited, player)) # name, seen count, visited (url), player to use
+        # audio2text(output.name) # Google STT
 
         if q_pyo.empty() is True:
             continue
 
-        # Get files that have been played by pyo
-        old_files = []
+        # Cleanup files that have been played by pyo
         old_files.append(q_pyo.get())
-
-        # Delete last file if player occurs twice (recycled)
-        if os.path.exists(old_files[-1][0]): # check if file has been downloaded
-            old_players = [old[1] for old in old_files[:-1]] # make a list of the players in use except most recently added
-            if old_files[-1][1] in old_players: # see if the last player is in the old player list (its safe to delete)
-                i = old_players.index(old_files[-1][1])
-                os.remove(old_files[i][0]) # remove file associated with old player
-                del old_files[i] # delete entry from list
+        cleanup_used(old_files)
 
 def pyo_look(arg):
     global switch
@@ -170,11 +171,20 @@ def shutdown():
     s.shutdown()
     p.join()
 
-def cleanup():
-    for old_file in os.listdir(src):
-        if old_file.startswith('sound_'):
-            os.remove(src + old_file)
-    print('Cleaned up!')
+# def cleanup():
+#     for old_file in os.listdir(src):
+#         if old_file.startswith('sound_'):
+#             os.remove(src + old_file)
+#     print('Cleaned up!')
+
+def cleanup_used(old_files):
+    # Delete last file if player occurs twice (recycled)
+    if os.path.exists(old_files[-1][0]): # check if file has been downloaded
+        old_players = [old[1] for old in old_files[:-1]] # make a list of the players in use except most recently added
+        if old_files[-1][1] in old_players: # see if the last player is in the old player list (its safe to delete)
+            i = old_players.index(old_files[-1][1])
+            os.remove(old_files[i][0]) # remove file associated with old player
+            del old_files[i] # delete entry from list
 
 if __name__ == '__main__':
 
@@ -188,8 +198,8 @@ if __name__ == '__main__':
     min_dur = 8
     warm_up = 5
     max_dur = 24
+    src='./sounds/'
     sound_queue = []
-    src = 'sounds/'
     switch = None
 
     adsrs = [None] * player_num
@@ -258,5 +268,5 @@ if __name__ == '__main__':
     except:
         shutdown()
     
-    finally:
-        cleanup()
+    # finally:
+    #     cleanup()

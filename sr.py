@@ -18,7 +18,7 @@ def audio2text(path):
             audio = r.record(source)
             result = r.recognize_google(audio, language='en-US') # only eng
         except UnknownValueError: # no words recognized
-            result = "\nUnintelligible..."
+            result = "Unintelligible..."
             pass
 
-        print('\n %s' % result)
+        return print('\nTranscription: %s\n' % result)
