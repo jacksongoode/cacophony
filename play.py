@@ -19,24 +19,29 @@ from sr import audio2text
 import librosa
 import torch
 import panns_inference
-from panns_inference import AudioTagging, SoundEventDetection, labels,  print_audio_tagging_result
+from panns_inference import AudioTagging, SoundEventDetection, labels,  print_audio_tagging_result # may not need last func
 
 def pann(filepath):
+    musical = False
     (audio, _) = librosa.core.load(filepath, sr=32000, mono=True)
     audio = audio[None, :]  # (batch_size, segment_samples)
 
     at = AudioTagging(checkpoint_path='/Users/jacksongoode/panns_data/MobileNetV2_mAP=0.383.pth',
                         device='cuda', model='MobileNet')
     (clipwise_output, embedding) = at.inference(audio)
-    print_audio_tagging_result(clipwise_output[0], 1)
+    probs = list(clipwise_output[0])
+    # print_audio_tagging_result(probs, 1)
+    if probs.index(max(probs)) in range(137, 283): # range of music in AudioNet
+        print("It's music!")
+        musical = True
+    else:
+        print('Not music!')
+
+    return musical
 
 def download_media(link, i, min_dur, max_dur, temp_dir):
     yt_url = link
     cur_dur = random.randint(min_dur, max_dur)
-
-    # total_dur += cur_dur
-    # start_time = time.time()
-    # time_list.append(start_time + total_dur)
 
     # output = 'sounds/sound_%s.flac' % i
     output = tempfile.NamedTemporaryFile(suffix='.flac', dir=temp_dir.name, delete=False)
@@ -103,11 +108,12 @@ def choose_media(link_dict, player_num, min_dur, max_dur, q_dl, q_pyo):
             print('Bad link...')
             continue
         
+        musical = pann(output.name) # is it musical?
+        
         player = random.randint(0, player_num - 1)
-        q_dl.put((output.name, seen, visited, player)) # name, seen count, visited (url), player to use
+        q_dl.put((output.name, seen, visited, player, musical)) # name, seen count, visited (url), player to use
         
         # audio2text(output.name) # Google STT
-        pann(output.name) # Classification
 
         if q_pyo.empty() is True:
             continue
@@ -127,7 +133,7 @@ def pyo_look(arg):
     
     # Get any new files downloaded
     sound_queue.append(q_dl.get())
-    output, seen, visited, player = sound_queue.pop()
+    output, seen, visited, player, musical = sound_queue.pop()
 
     # Fade old sound in .5s
     panners[player].set('mul', 0, .5)
@@ -144,7 +150,11 @@ def pyo_look(arg):
         players[player].setPath(output)
 
         # sign = random.choice([-1, 1])
-        rand_speed = random.uniform(.85, 1.15)
+        if musical:
+            rand_speed = random.uniform(.75, .95)
+        else:
+            rand_speed = random.uniform(.85, 1.15)
+
         print('Playback: %s' % rand_speed)
         players[player].setSpeed(rand_speed)
         new_dur = dur / abs(rand_speed)
@@ -187,12 +197,6 @@ def shutdown():
     s.shutdown()
     p.join()
 
-# def cleanup():
-#     for old_file in os.listdir(src):
-#         if old_file.startswith('sound_'):
-#             os.remove(src + old_file)
-#     print('Cleaned up!')
-
 def cleanup_used(old_files):
     # Delete last file if player occurs twice (recycled)
     if os.path.exists(old_files[-1][0]): # check if file has been downloaded
@@ -210,7 +214,7 @@ if __name__ == '__main__':
     args = parser.parse_args()
 
     # Variables to pass through to triggers
-    player_num = args.players # how many concurrent players (panners, faders) # TODO: make arg
+    player_num = args.players # how many concurrent players (panners, faders)
     min_dur = 8
     warm_up = 5
     max_dur = 24
@@ -283,6 +287,4 @@ if __name__ == '__main__':
 
     except:
         shutdown()
-    
-    # finally:
-    #     cleanup()
+
