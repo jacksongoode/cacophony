@@ -16,6 +16,20 @@ from youtube_dl.utils import DownloadError
 from pyo import *
 from sr import audio2text
 
+import librosa
+import torch
+import panns_inference
+from panns_inference import AudioTagging, SoundEventDetection, labels,  print_audio_tagging_result
+
+def pann(filepath):
+    (audio, _) = librosa.core.load(filepath, sr=32000, mono=True)
+    audio = audio[None, :]  # (batch_size, segment_samples)
+
+    at = AudioTagging(checkpoint_path='/Users/jacksongoode/panns_data/MobileNetV2_mAP=0.383.pth',
+                        device='cuda', model='MobileNet')
+    (clipwise_output, embedding) = at.inference(audio)
+    print_audio_tagging_result(clipwise_output[0], 1)
+
 def download_media(link, i, min_dur, max_dur, temp_dir):
     yt_url = link
     cur_dur = random.randint(min_dur, max_dur)
@@ -91,7 +105,9 @@ def choose_media(link_dict, player_num, min_dur, max_dur, q_dl, q_pyo):
         
         player = random.randint(0, player_num - 1)
         q_dl.put((output.name, seen, visited, player)) # name, seen count, visited (url), player to use
+        
         # audio2text(output.name) # Google STT
+        pann(output.name) # Classification
 
         if q_pyo.empty() is True:
             continue
