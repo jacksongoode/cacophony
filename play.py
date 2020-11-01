@@ -31,10 +31,10 @@ def pann(filepath):
     (clipwise_output, embedding) = at.inference(audio)
     probs = list(clipwise_output[0])
     if probs.index(max(probs)) in range(137, 283): # range of music classes in AudioNet
-        print("It's music!")
+        print("\nIt's music!")
         musical = True
     else:
-        print('Not music!')
+        print('\nNot music!')
 
     return musical
 
@@ -126,7 +126,7 @@ def pyo_look(arg):
     # print('\nLooking!')
 
     if q_dl.empty() is True:
-        print('Queue empty!')
+        print('.', end='', flush=True)
         return # if file is empty error, skip (shouldn't happen unless files are loaded too quickly)
     
     # Get any new files downloaded
@@ -214,8 +214,8 @@ if __name__ == '__main__':
     # Variables to pass through to triggers
     player_num = args.players # how many concurrent players (panners, faders)
     min_dur = 8
-    warm_up = 5
-    max_dur = 24
+    warm_up = 4
+    max_dur = 32
     src = './sounds/'
     sound_queue = []
     switch = None
@@ -257,7 +257,7 @@ if __name__ == '__main__':
     p.start()
 
     # * --- pyo ---
-    s = Server(buffersize=512)
+    s = Server(nchnls=8, buffersize=256)
     s.deactivateMidi()
     s.boot()
     print('Player on!')
@@ -267,6 +267,8 @@ if __name__ == '__main__':
         adsrs[i] = Adsr(attack=0.75, decay=0, sustain=1, release=3)
         players[i] = SfPlayer(src + 'empty.flac', speed=1, mul=adsrs[i])
         panners[i] = Pan(players[i], pan=pan_vals[i])
+    
+    # Effects added to whole set
     verbs = STRev(panners, inpos=pan_vals, revtime=1.2, cutoff=6000, bal=0.5, roomSize=2, firstRefGain=-24)
     # verbs = Freeverb(panners, size=0.5, damp=0.75)
     eq = EQ(verbs, freq=180, boost=-12.0, type=1).out()
