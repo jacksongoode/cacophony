@@ -19,7 +19,7 @@ from sr import audio2text
 import librosa
 import torch
 import panns_inference
-from panns_inference import AudioTagging, SoundEventDetection, labels,  print_audio_tagging_result # may not need last func
+from panns_inference import AudioTagging, SoundEventDetection, labels
 
 def pann(filepath):
     musical = False
@@ -30,12 +30,11 @@ def pann(filepath):
                         device='cuda', model='MobileNet')
     (clipwise_output, embedding) = at.inference(audio)
     probs = list(clipwise_output[0])
-    # print_audio_tagging_result(probs, 1)
-    if probs.index(max(probs)) in range(137, 283): # range of music in AudioNet
-        print("It's music!")
+    if probs.index(max(probs)) in range(137, 283): # range of music classes in AudioNet
+        print("\nIt's music!")
         musical = True
     else:
-        print('Not music!')
+        print('\nNot music!')
 
     return musical
 
@@ -58,7 +57,7 @@ def download_media(link, i, min_dur, max_dur, temp_dir):
             result = ydl.extract_info(yt_url, download = False)
             video = result['entries'][0] if 'entries' in result else result
     except DownloadError as e:
-        print('Error!\n')   
+        print('Bad link!')   
         return # ? YoutTube blocking download?
     
     url = video['url']
@@ -105,7 +104,6 @@ def choose_media(link_dict, player_num, min_dur, max_dur, q_dl, q_pyo):
         try:
             output, cur_dur = download_media(rnd_link[0], i, min_dur, max_dur, temp_dir)
         except Exception as e:
-            print('Bad link...')
             continue
         
         musical = pann(output.name) # is it musical?
@@ -128,7 +126,7 @@ def pyo_look(arg):
     # print('\nLooking!')
 
     if q_dl.empty() is True:
-        print('Queue empty!')
+        print('.', end='', flush=True)
         return # if file is empty error, skip (shouldn't happen unless files are loaded too quickly)
     
     # Get any new files downloaded
@@ -155,7 +153,7 @@ def pyo_look(arg):
         else:
             rand_speed = random.uniform(.85, 1.15)
 
-        print('Playback: %s' % rand_speed)
+        print(f'Playback: {rand_speed}')
         players[player].setSpeed(rand_speed)
         new_dur = dur / abs(rand_speed)
 
@@ -172,11 +170,11 @@ def pyo_look(arg):
         if visited == 0:
             eval_seen = (math.log(seen + 1, max_seen) * mul_range) + mul_min # range and min
             panners[player].set(attr='mul', value=eval_seen, port=0.5)
-            print('Amp: %s' % eval_seen)
+            print(f'Amp: {eval_seen}')
         else:
             eval_visit = (math.log(visited + 1, max_visit) * mul_range) + mul_min
             panners[player].set(attr='mul', value=eval_visit, port=0.5)
-            print('Amp: %s' % eval_visit)
+            print(f'Amp: {eval_visit}')
         
         # print('Pan: %s' % rand_pan)
         # Tell subprocess, old file is ready for deletion
@@ -184,12 +182,12 @@ def pyo_look(arg):
 
     switch = CallAfter(switch_sound, .5)
 
-    print( '\n--- Now playing %s on player %s for %ss ---' % (output, player, dur))
+    print(f'\n--- Now playing on player {player} for {dur}s ---')
 
     # Set new time to look for file
     switch_dur = ((dur - min_dur) / max_dur * 8) + 2
     pat.set('time', switch_dur) # 2 - 10s
-    print('Switch dur: %s' % switch_dur)
+    print(f'Switch dur: {switch_dur}')
 
 def shutdown():
     print('Shutting down')
@@ -216,9 +214,9 @@ if __name__ == '__main__':
     # Variables to pass through to triggers
     player_num = args.players # how many concurrent players (panners, faders)
     min_dur = 8
-    warm_up = 5
-    max_dur = 24
-    src='./sounds/'
+    warm_up = 4
+    max_dur = 32
+    src = './sounds/'
     sound_queue = []
     switch = None
 
@@ -259,7 +257,7 @@ if __name__ == '__main__':
     p.start()
 
     # * --- pyo ---
-    s = Server(buffersize=512)
+    s = Server(nchnls=8, buffersize=256)
     s.deactivateMidi()
     s.boot()
     print('Player on!')
@@ -269,6 +267,8 @@ if __name__ == '__main__':
         adsrs[i] = Adsr(attack=0.75, decay=0, sustain=1, release=3)
         players[i] = SfPlayer(src + 'empty.flac', speed=1, mul=adsrs[i])
         panners[i] = Pan(players[i], pan=pan_vals[i])
+    
+    # Effects added to whole set
     verbs = STRev(panners, inpos=pan_vals, revtime=1.2, cutoff=6000, bal=0.5, roomSize=2, firstRefGain=-24)
     # verbs = Freeverb(panners, size=0.5, damp=0.75)
     eq = EQ(verbs, freq=180, boost=-12.0, type=1).out()
