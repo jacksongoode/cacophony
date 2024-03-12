@@ -100,7 +100,8 @@ def setup_chrome_driver():
     if chromedriver_path:
         return chromedriver_path
 
-    ask_user_permission("Download and setup ChromeDriver? [y/n]")
+    if not ask_user_permission("Download and setup ChromeDriver? [y/n]"):
+        raise Exception("User declined to download ChromeDriver.")
 
     response = requests.get(
         "https://googlechromelabs.github.io/chrome-for-testing/last-known-good-versions-with-downloads.json",
@@ -160,23 +161,20 @@ def valid_youtube_watch_link_regex(url):
     Returns:
         bool: True if the URL is a valid YouTube watch URL according to the regex, False otherwise.
     """
-    return bool(
-        re.match(r"https?://(www\.)?youtube\.com/watch\?v=[\w-]+", url)
-        or re.match(r"https?://youtu\.be/[\w-]+", url)
-    )
+    return bool(re.match(r"^(https?:\/\/)?(www\.)?youtu(be\.com|\.be)\/.+"), url)
 
 
 def increment_link(links, url, current=False):
-    if valid_youtube_watch_link_regex(url):
-        if url in links:
-            if current:
-                # Increment visits only
-                links[url] = (links[url][0] + 1, links[url][1])
-            else:
-                # Increment seen count only
-                links[url] = (links[url][0], links[url][1] + 1)
+    # if valid_youtube_watch_link_regex(url):
+    if url in links:
+        if current:
+            # Increment visits only
+            links[url] = (links[url][0] + 1, links[url][1])
         else:
-            links[url] = (1, 0) if current else (0, 1)
+            # Increment seen count only
+            links[url] = (links[url][0], links[url][1] + 1)
+    else:
+        links[url] = (1, 0) if current else (0, 1)
 
     return links
 
@@ -191,7 +189,7 @@ def is_browser_open(driver):
         return False
 
 
-def scrape_links(driver, links, check_interval=5):
+def scrape_links(driver, links, check_interval=2):
     """
     Scrape links with a periodic check within the current page, adding unseen links to the links dictionary.
 
@@ -215,23 +213,26 @@ def scrape_links(driver, links, check_interval=5):
 
             # Increment link count for the current page URL only once when navigated to a new page
             if current_url != last_incremented_url:
-                increment_link(links, current_url, current=True)
+                links = increment_link(links, current_url, current=True)
                 last_incremented_url = current_url
                 previous_hrefs.clear()  # Clear previously seen hrefs on navigating to a new page
 
             # Find all watch?v= links on the current page, considering their length
             hrefs = set()
             for elem in driver.find_elements(
-                By.XPATH, "//a[starts-with(@href, 'https://www.youtube.com/watch?v=')]"
+                By.XPATH, "//a[starts-with(@href, '/watch?v=')]"
             ):
-                href = elem.get_attribute("href")
-                if href and len(href) == 43:
-                    hrefs.add(href)
+                try:
+                    href = elem.get_attribute("href")
+                    if href:
+                        hrefs.add(href.split("&")[0])
+                except StaleElementReferenceException:
+                    continue
 
             # Identify new links as those not seen in the previous iteration
             new_hrefs = hrefs - previous_hrefs
             for href in new_hrefs:
-                increment_link(links, href, current=False)
+                links = increment_link(links, href, current=False)
 
             # Prepare for the next iteration
             previous_hrefs = hrefs

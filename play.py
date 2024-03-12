@@ -2,8 +2,10 @@ from __future__ import unicode_literals
 
 import argparse
 import io
+import logging
 import math
 import multiprocessing as mp
+import os
 import random
 import time
 
@@ -12,6 +14,9 @@ from pyo import EQ, Adsr, CallAfter, Pan, Pattern, Server, SfPlayer, STRev, sndi
 from yt_dlp.utils import DownloadError
 
 from audio_downloader import choose_media
+
+# Setup basic logging
+logging.basicConfig(level=logging.INFO)
 
 
 class AudioPlayer:
@@ -51,10 +56,13 @@ class AudioPlayer:
         # Create players, panners, and set up effects
         for i in range(self.player_count):
             self.pan_vals.append(i / self.player_count + (1 / (2 * self.player_count)))
+
             adsr = Adsr(attack=0.75, decay=0, sustain=1, release=3)
             self.adsrs.append(adsr)
+
             player = SfPlayer(self.source_dir + "empty.flac", speed=1, mul=adsr)
             self.players.append(player)
+
             panner = Pan(player, pan=self.pan_vals[i])
             self.panners.append(panner)
 
@@ -81,63 +89,79 @@ class AudioPlayer:
         self.server.shutdown()
 
     def pyo_look(self):
-        if self.q_dl.empty() is True:
-            print(".", end="", flush=True)
-            return
+        try:
+            if self.q_dl.empty() is True:
+                print(".", end="", flush=True)
+                return
 
-        self.sound_queue.append(self.q_dl.get())
-        output, seen, visited, player = self.sound_queue.pop()
+            self.sound_queue.append(self.q_dl.get())
+            output, seen, visited, player = self.sound_queue.pop()
 
-        # Fade old sound in 0.5s
-        self.panners[player].set("mul", 0, 0.5)
+            if not os.path.exists(output):
+                logging.warning(f"File does not exist: {output}")
+                return
 
-        # New fade out for player (if played through)
-        dur = sndinfo(output)[1]
+            # Fade old sound in 0.5s
+            self.panners[player].set("mul", 0, 0.5)
 
-        def switch_sound():
-            self.players[player].setPath(output)
+            try:
+                file_info = sndinfo(output)
+                if file_info is None:
+                    raise Exception("Failed to get sound info.")
+                dur = file_info[1]
+            except Exception as e:
+                logging.error(f"Error getting sound info: {e}")
+                return
 
-            rand_speed = random.uniform(0.85, 1.15)
+            # New fade out for player (if played through)
+            dur = file_info[1]
 
-            print(f"Playback: {rand_speed}")
-            self.players[player].setSpeed(rand_speed)
-            new_dur = dur / abs(rand_speed)
+            def switch_sound():
+                self.players[player].setPath(output)
 
-            self.adsrs[player].setDur(new_dur)
-            self.adsrs[player].setRelease(new_dur * 0.25)  # release dependent on dur
+                rand_speed = random.uniform(0.85, 1.15)
 
-            self.players[player].play()
-            self.adsrs[player].play()
+                print(f"Playback: {rand_speed}")
+                self.players[player].setSpeed(rand_speed)
+                new_dur = dur / abs(rand_speed)
 
-            # Use seen and visited vals to calculate amp of sound (and verb?)
-            mul_range = 0.5
-            mul_min = 0.5
+                self.adsrs[player].setDur(new_dur)
+                self.adsrs[player].setRelease(
+                    new_dur * 0.25
+                )  # release dependent on dur
 
-            # Ensure base is greater than 1
-            max_seen_t = max(2, self.max_seen)
-            max_visit_t = max(2, self.max_visit)
+                self.players[player].play()
+                self.adsrs[player].play()
 
-            if visited == 0:
-                eval_seen = (
-                    math.log(seen + 1, max_seen_t) * mul_range
-                ) + mul_min  # range and min
-                self.panners[player].set(attr="mul", value=eval_seen, port=0.5)
-                print(f"Amp: {eval_seen}")
-            else:
-                eval_visit = (math.log(visited + 1, max_visit_t) * mul_range) + mul_min
-                self.panners[player].set(attr="mul", value=eval_visit, port=0.5)
-                print(f"Amp: {eval_visit}")
+                # Use seen and visited vals to calculate amp of sound (and verb?)
+                mul_range = 0.5
+                mul_min = 0.5
 
-            # Tell subprocess, old file is ready for deletion
-            self.q_pyo.put((output, player))
+                # Ensure base is greater than 1
+                max_seen_t = max(2, self.max_seen)
+                max_visit_t = max(2, self.max_visit)
 
-        self.switch = CallAfter(switch_sound, 0.5)
-        print(f"\n--- Now playing on player {player} for {dur}s ---")
+                if visited == 0:
+                    amp = (math.log(seen + 1, max_seen_t) * mul_range) + mul_min
+                else:
+                    amp = (math.log(visited + 1, max_visit_t) * mul_range) + mul_min
 
-        # Set new time to look for file
-        switch_dur = ((dur - self.min_duration) / self.max_duration * 8) + 2
-        self.pat.set("time", switch_dur)
-        print(f"Switch dur: {switch_dur}")
+                self.panners[player].set(attr="mul", value=amp, port=0.5)
+                print(f"Amp: {amp}\n")
+
+                # Tell subprocess, old file is ready for deletion
+                self.q_pyo.put((output, player))
+
+            self.switch = CallAfter(switch_sound, 0.5)
+            print(f"\n--- Now playing on player {player} for {dur}s ---")
+
+            # Set new time to look for file
+            switch_dur = ((dur - self.min_duration) / self.max_duration * 4) + 2
+            self.pat.set("time", switch_dur)
+            print(f"Switch dur: {switch_dur}")
+
+        except Exception as e:
+            logging.error(f"An error occurred in pyo_look: {e}")
 
     def run(self):
         self.setup_audio_environment()
