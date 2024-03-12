@@ -1,3 +1,4 @@
-.DS_Store
-resources/links.json
 __pycache__/
+.DS_Store
+drivers/
+resources/links.json
