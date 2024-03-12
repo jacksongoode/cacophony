@@ -197,11 +197,13 @@ def scrape_links(driver, links, check_interval=5):
 
     Args:
         driver: Selenium WebDriver instance.
-        links: Dictionary of links.
-        check_interval: Interval to wait between checks for new links.
+        links: Dictionary of links to be updated.
+        check_interval: Interval (in seconds) to wait between checks for new links.
     """
-    previous_hrefs = set()
-    last_incremented_url = None
+    previous_hrefs = set()  # Tracks hrefs found in the previous iteration
+    last_incremented_url = (
+        None  # Tracks the last URL for which the link count was incremented
+    )
 
     try:
         while True:
@@ -211,30 +213,32 @@ def scrape_links(driver, links, check_interval=5):
 
             current_url = driver.current_url
 
+            # Increment link count for the current page URL only once when navigated to a new page
             if current_url != last_incremented_url:
                 increment_link(links, current_url, current=True)
                 last_incremented_url = current_url
+                previous_hrefs.clear()  # Clear previously seen hrefs on navigating to a new page
 
-            hrefs = {
-                elem.get_attribute("href")
-                for elem in driver.find_elements(
-                    By.XPATH, "//a[starts-with(@href, '/watch?v=')]"
-                )
-                if elem.get_attribute("href") and len(elem.get_attribute("href")) == 43
-            }
+            # Find all watch?v= links on the current page, considering their length
+            hrefs = set()
+            for elem in driver.find_elements(
+                By.XPATH, "//a[starts-with(@href, 'https://www.youtube.com/watch?v=')]"
+            ):
+                href = elem.get_attribute("href")
+                if href and len(href) == 43:
+                    hrefs.add(href)
 
-            # Find new links by subtracting the previously found set from the current one
+            # Identify new links as those not seen in the previous iteration
             new_hrefs = hrefs - previous_hrefs
             for href in new_hrefs:
                 increment_link(links, href, current=False)
 
-            # Remember the currently found hrefs for the next iteration comparison
+            # Prepare for the next iteration
             previous_hrefs = hrefs
 
-            save_links(links)
+            save_links(links)  # Persist the updated links dictionary
 
-            # Sleep for the defined interval before checking the page again
-            time.sleep(check_interval)
+            time.sleep(check_interval)  # Wait before checking the page again
 
     except WebDriverException as e:
         print(f"A WebDriver error occurred: {e.__class__.__name__}: {e}")
