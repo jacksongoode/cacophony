@@ -11,7 +11,6 @@ import time
 
 import orjson
 from pyo import EQ, Adsr, CallAfter, Pan, Pattern, Server, SfPlayer, STRev, sndinfo
-from yt_dlp.utils import DownloadError
 
 from audio_downloader import choose_media
 
