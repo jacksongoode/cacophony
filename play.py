@@ -4,24 +4,24 @@ import argparse
 import io
 import logging
 import math
-import multiprocessing as mp
 import os
 import random
+import threading
 import time
+from queue import Queue
 
 import orjson
 from pyo import EQ, Adsr, CallAfter, Pan, Pattern, Server, SfPlayer, STRev, sndinfo
 
 from audio_downloader import choose_media
 
-# Setup basic logging
-logging.basicConfig(level=logging.INFO)
+logging.basicConfig(level=logging.INFO, format="%(message)s")
 
 
 class AudioPlayer:
     def __init__(self, player_count, min_duration, max_duration, source_dir):
-        self.q_dl = mp.Queue()
-        self.q_pyo = mp.Queue()
+        self.q_dl = Queue()
+        self.q_pyo = Queue()
         self.player_count = player_count
         self.min_duration = min_duration
         self.max_duration = max_duration
@@ -37,7 +37,7 @@ class AudioPlayer:
         self.max_seen = 0
         self.max_visit = 0
         self.warm_up_duration = 5
-        self.server = Server(nchnls=8, buffersize=256)
+        self.server = Server(nchnls=2, buffersize=1024, duplex=0)
 
     def load_links(self, filename):
         with open(filename, "rb") as f:
@@ -50,7 +50,7 @@ class AudioPlayer:
     def setup_audio_environment(self):
         self.server.deactivateMidi()
         self.server.boot()
-        print("Player on!")
+        logging.info("Player on!")
 
         # Create players, panners, and set up effects
         for i in range(self.player_count):
@@ -59,10 +59,10 @@ class AudioPlayer:
             adsr = Adsr(attack=0.75, decay=0, sustain=1, release=3)
             self.adsrs.append(adsr)
 
-            player = SfPlayer(self.source_dir + "empty.flac", speed=1, mul=adsr)
+            player = SfPlayer(self.source_dir + "empty.wav", speed=1, mul=adsr)
             self.players.append(player)
 
-            panner = Pan(player, pan=self.pan_vals[i])
+            panner = Pan(player, pan=self.pan_vals[i], spread=0.25)
             self.panners.append(panner)
 
         self.verbs = STRev(
@@ -72,95 +72,89 @@ class AudioPlayer:
             cutoff=6000,
             bal=0.5,
             roomSize=3,
-            firstRefGain=-24,
+            firstRefGain=-18,
         )
         self.eq = EQ(self.verbs, freq=180, boost=-12.0, type=1).out()
 
     def play_audio(self):
-        print("Warming up...")
+        logging.info("Warming up...")
         time.sleep(self.warm_up_duration)
         self.server.start()
-        print("Started!")
+        logging.info("Started!")
 
     def shutdown(self):
-        print("Shutting down")
+        logging.info("Shutting down")
         self.server.stop()
         self.server.shutdown()
 
     def pyo_look(self):
-        try:
-            if self.q_dl.empty() is True:
-                print(".", end="", flush=True)
-                return
-
-            self.sound_queue.append(self.q_dl.get())
-            output, seen, visited, player = self.sound_queue.pop()
-
-            if not os.path.exists(output):
-                logging.warning(f"File does not exist: {output}")
-                return
-
-            # Fade old sound in 0.5s
-            self.panners[player].set("mul", 0, 0.5)
-
+        def handle_sound_info(output):
             try:
                 file_info = sndinfo(output)
                 if file_info is None:
-                    raise Exception("Failed to get sound info.")
-                dur = file_info[1]
+                    raise ValueError("Failed to get sound info.")
+                return file_info[1]
             except Exception as e:
                 logging.error(f"Error getting sound info: {e}")
-                return
+                return None
 
-            # New fade out for player (if played through)
-            dur = file_info[1]
+        def calculate_amplitude(seen, visited):
+            # Ensuring base for logarithm is always greater than 1
+            base, interact = (
+                (seen, self.max_seen) if visited == 0 else (visited, self.max_visit)
+            )
+            # Apply max to ensure base is at least 2, making the log function valid
+            interact = max(1, interact)
+            mul_range, mul_min = 0.5, 0.5
 
-            def switch_sound():
-                self.players[player].setPath(output)
+            return (math.log(base + 1, interact) * mul_range) + mul_min
 
-                rand_speed = random.uniform(0.85, 1.15)
+        if self.q_dl.empty():
+            print(".", end="", flush=True)
+            return
 
-                print(f"Playback: {rand_speed}")
-                self.players[player].setSpeed(rand_speed)
-                new_dur = dur / abs(rand_speed)
+        self.sound_queue.append(self.q_dl.get())
+        output, seen, visited, player = self.sound_queue.pop()
 
-                self.adsrs[player].setDur(new_dur)
-                self.adsrs[player].setRelease(
-                    new_dur * 0.25
-                )  # release dependent on dur
+        if not os.path.exists(output):
+            logging.warning(f"File does not exist: {output}")
+            return
 
-                self.players[player].play()
-                self.adsrs[player].play()
+        self.panners[player].set("mul", 0, 0.5)  # Fading old sound
 
-                # Use seen and visited vals to calculate amp of sound (and verb?)
-                mul_range = 0.5
-                mul_min = 0.5
+        dur = handle_sound_info(output)
+        if dur is None:  # Handling failure directly
+            return
 
-                # Ensure base is greater than 1
-                max_seen_t = max(2, self.max_seen)
-                max_visit_t = max(2, self.max_visit)
+        def switch_sound():
+            self.players[player].setPath(output)
+            rand_speed = random.uniform(0.75, 1.25)
+            self.players[player].setSpeed(rand_speed)
+            logging.info(f"Playback: {rand_speed}")
+            new_dur = dur / abs(rand_speed)
 
-                if visited == 0:
-                    amp = (math.log(seen + 1, max_seen_t) * mul_range) + mul_min
-                else:
-                    amp = (math.log(visited + 1, max_visit_t) * mul_range) + mul_min
+            self.adsrs[player].setDur(new_dur)
+            self.adsrs[player].setRelease(
+                new_dur * 0.25
+            )  # Release dependent on duration
 
-                self.panners[player].set(attr="mul", value=amp, port=0.5)
-                print(f"Amp: {amp}\n")
+            amp = calculate_amplitude(seen, visited)
+            self.panners[player].set(attr="mul", value=amp, port=0.5)
+            logging.info(f"Amp: {amp}")
 
-                # Tell subprocess, old file is ready for deletion
-                self.q_pyo.put((output, player))
+            self.players[player].play()
+            self.adsrs[player].play()
 
-            self.switch = CallAfter(switch_sound, 0.5)
-            print(f"\n--- Now playing on player {player} for {dur}s ---")
+            self.q_pyo.put(
+                (output, player)
+            )  # Indicating old file's readiness for deletion
 
-            # Set new time to look for file
-            switch_dur = ((dur - self.min_duration) / self.max_duration * 4) + 2
-            self.pat.set("time", switch_dur)
-            print(f"Switch dur: {switch_dur}")
+        self.switch = CallAfter(switch_sound, 0.5)
+        logging.info(f"\n⏵ Now playing on player {player} ({dur}s)")
 
-        except Exception as e:
-            logging.error(f"An error occurred in pyo_look: {e}")
+        switch_dur = ((dur - self.min_duration) / self.max_duration * 2) + 2
+        self.pat.set("time", switch_dur)
+        logging.info(f"Switch dur: {switch_dur}")
 
     def run(self):
         self.setup_audio_environment()
@@ -195,7 +189,7 @@ def main():
 
     # Start youtube-dl/ffmpeg
 
-    process = mp.Process(
+    download_thread = threading.Thread(
         target=choose_media,
         args=(
             link_dict,
@@ -206,8 +200,8 @@ def main():
             audio_player.q_pyo,
         ),
     )
-    process.daemon = True
-    process.start()
+    download_thread.daemon = True  # Allows thread to exit when main program exits
+    download_thread.start()
 
     # Start the player
     audio_player.run()

@@ -3,6 +3,7 @@ import os
 import tempfile
 
 import cv2
+import orjson
 import requests
 import yt_dlp
 
@@ -79,18 +80,9 @@ async def display_images_with_transitions(queue):
 async def main():
     queue = asyncio.Queue()
     # Example URLs, replace or dynamically append these as required
-    urls = [
-        "https://www.youtube.com/watch?v=Taqk6UmcOzI",
-        "https://www.youtube.com/watch?v=pWu7GLp0Pnk",
-        "https://www.youtube.com/watch?v=YR98kk15BEE",
-        "https://www.youtube.com/watch?v=-RzDSxko2tk",
-        "https://www.youtube.com/watch?v=D4M9cp_yNhg",
-        "https://www.youtube.com/watch?v=hVBa76RcxI8",
-        "https://www.youtube.com/watch?v=7b1BEniEbWY",
-        "https://www.youtube.com/watch?v=VlS-cUVnB2Q",
-        "https://www.youtube.com/watch?v=OJj_UVPOPDg",
-        "https://www.youtube.com/watch?v=b4J39mdB8dE",
-    ]
+    with open("resources/links.json", "rb") as f:
+        urls = orjson.loads(f.read()).keys()
+
     for url in urls:
         await queue.put(url)
     await display_images_with_transitions(queue)
