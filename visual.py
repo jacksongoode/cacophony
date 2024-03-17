@@ -1,92 +1,94 @@
 import asyncio
 import os
 import tempfile
+from contextlib import contextmanager
 
+import aiohttp
 import cv2
-import orjson
-import requests
-import yt_dlp
 
-
-# Function to get thumbnail URL from a YouTube video URL
-def get_thumbnail_url(video_url):
-    with yt_dlp.YoutubeDL() as ydl:
-        info_dict = ydl.extract_info(video_url, download=False)
-        thumbnail_url = info_dict.get("thumbnail", None)
-    thumbnail_url = "/".join(thumbnail_url.rsplit("/", 1)[:-1]) + "/hqdefault.jpg"
-    return thumbnail_url
+TRANSITION_DURATION = 5.0
+FRAME_RATE = 30
 
 
 # Function to download the thumbnail and save it to a temporary file
 async def download_thumbnail(url):
-    response = requests.get(url, stream=True)
-    if response.status_code == 200:
-        with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
-            for chunk in response.iter_content(1024):
-                tmp_file.write(chunk)
-            return tmp_file.name
+    async with aiohttp.ClientSession() as session:
+        async with session.get(url) as response:
+            if response.status == 200:
+                with tempfile.NamedTemporaryFile(
+                    delete=False, suffix=".jpg"
+                ) as tmp_file:
+                    async for chunk in response.content.iter_chunked(1024):
+                        tmp_file.write(chunk)
+                    return tmp_file.name
     return None
 
 
 # Apply blur effect to an image
 def blur_image(image_path):
-    # Step 1: Load the lower resolution image
-    # Assuming the image is already 480x360
     image = cv2.imread(image_path)
-
-    # Step 2: Apply Gaussian Blur
-    blurred = cv2.GaussianBlur(image, (0, 0), 50)
-
-    # Step 3: Upsample to 1080p (1920x1080)
+    blurred = cv2.GaussianBlur(image, (0, 0), 30)
     upscaled = cv2.resize(blurred, (1920, 1080), interpolation=cv2.INTER_LINEAR)
-
-    smoothed = cv2.blur(upscaled, (5, 5))
-
+    smoothed = cv2.blur(upscaled, (2, 2))
     return smoothed
 
 
-DURATION = 5  # Duration of the transition in seconds
+# Context manager for temporary image files
+@contextmanager
+def temporary_image_file(suffix=".jpg"):
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
+        yield tmp_file.name
+    os.unlink(tmp_file.name)
 
 
-# Main async function to display the images with transitions
-async def display_images_with_transitions(queue):
-    prev_image = None
-    # Calculate the wait time for cv2.waitKey based on the desired transition duration and frame rate
-    frame_rate = 60  # Number of frames per second in the transition
-    total_frames = DURATION * frame_rate
-    wait_time = int(1000 / frame_rate)  # Convert to milliseconds for cv2.waitKey
+async def display_thumbnail(thumbnail_path, stop_event):
+    if thumbnail_path is None:
+        return
 
-    while True:
-        url = await queue.get()
-        thumbnail_url = get_thumbnail_url(url)
-        temp_image_path = await download_thumbnail(thumbnail_url)
-        if temp_image_path:
-            image = blur_image(temp_image_path)
+    image = blur_image(thumbnail_path)
+
+    with temporary_image_file() as prev_thumbnail_path:
+        if os.path.exists(".thumbnail.jpg"):
+            os.rename(".thumbnail.jpg", prev_thumbnail_path)
+        else:
+            prev_thumbnail_path = None
+
+        prev_image = cv2.imread(prev_thumbnail_path) if prev_thumbnail_path else None
+
+        window_name = "cacophony"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        # cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
+
+        start_time = asyncio.get_event_loop().time()
+        frame_delay = 1.0 / FRAME_RATE
+        transition_complete = False
+
+        while not stop_event.is_set() and not transition_complete:
+            elapsed_time = asyncio.get_event_loop().time() - start_time
+            alpha = min(elapsed_time / TRANSITION_DURATION, 1.0)
+
             if prev_image is not None:
-                # Make a seamless transition from prev_image to image
-                for frame in range(total_frames):
-                    alpha = frame / total_frames
-                    beta = 1.0 - alpha
-                    transition_image = cv2.addWeighted(
-                        prev_image, beta, image, alpha, 0
-                    )
-                    cv2.imshow("Transition Effect", transition_image)
-                    cv2.waitKey(wait_time)
-            prev_image = image
-            os.unlink(temp_image_path)
+                transition_image = cv2.addWeighted(
+                    prev_image, 1.0 - alpha, image, alpha, 0
+                )
+            else:
+                transition_image = image
 
+            if alpha < 1.0:
+                # Overlay the URL at the bottom left of the thumbnail only once
+                cv2.putText(
+                    transition_image,
+                    thumbnail_path,
+                    (10, transition_image.shape[0] - 10),
+                    cv2.FONT_HERSHEY_SIMPLEX,
+                    1,
+                    (255, 255, 255),
+                    1,
+                    cv2.LINE_AA,
+                )
+                cv2.imshow(window_name, transition_image)
+                cv2.waitKey(int(frame_delay * 1000))
+            else:
+                transition_complete = True
 
-# Main setup
-async def main():
-    queue = asyncio.Queue()
-    # Example URLs, replace or dynamically append these as required
-    with open("resources/links.json", "rb") as f:
-        urls = orjson.loads(f.read()).keys()
-
-    for url in urls:
-        await queue.put(url)
-    await display_images_with_transitions(queue)
-
-
-if __name__ == "__main__":
-    asyncio.run(main())
+        cv2.imwrite(".thumbnail.jpg", image)
