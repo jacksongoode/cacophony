@@ -1,9 +1,12 @@
+import logging
 import os
 import platform
+import random
 import re
 import time
 import traceback
 import zipfile
+from urllib.parse import parse_qs, urlparse
 from urllib.request import urlretrieve
 
 import orjson
@@ -25,7 +28,7 @@ def load_links():
         with open("resources/links.json", "rb") as f:
             return orjson.loads(f.read())
     except FileNotFoundError:
-        print("No links.json found, creating anew")
+        logging.info("No links.json found, creating anew")
         return {}
 
 
@@ -37,13 +40,14 @@ def save_links(links):
 
 def ask_user_permission(prompt):
     """Ask user for permission with a yes/no question."""
-    valid_responses = {"yes": True, "y": True, "no": False, "n": False}
     while True:
-        user_input = input(prompt).lower()
-        if user_input in valid_responses:
-            return valid_responses[user_input]
+        user_input = input(f"{prompt} ").strip().lower()
+        if user_input == "y":
+            return True
+        elif user_input == "n":
+            return False
         else:
-            print("Please answer with 'yes/y' or 'no/n'.")
+            print("Invalid input. Please enter 'y' or 'n'.")
 
 
 def check_chromedriver_exists():
@@ -89,7 +93,6 @@ def download_and_extract_chromedriver(download_url, extract_path="drivers"):
     if platform.system().lower() == "windows":
         chromedriver_path += ".exe"
 
-    # trunk-ignore(bandit/B103)
     os.chmod(chromedriver_path, 0o755)  # Make chromedriver executable
 
     return chromedriver_path
@@ -164,18 +167,35 @@ def valid_youtube_watch_link_regex(url):
     return bool(re.match(r"^(https?:\/\/)?(www\.)?youtu(be\.com|\.be)\/.+"), url)
 
 
-def increment_link(links, url, current=False):
-    # if valid_youtube_watch_link_regex(url):
-    if url in links:
-        if current:
-            # Increment visits only
-            links[url] = (links[url][0] + 1, links[url][1])
-        else:
-            # Increment seen count only
-            links[url] = (links[url][0], links[url][1] + 1)
-    else:
-        links[url] = (1, 0) if current else (0, 1)
+def clean_url(url):
+    """
+    Clean the URL to remove any additional parameters and return only the video ID.
 
+    Args:
+        url: The YouTube video URL.
+
+    Returns:
+        The cleaned URL containing only the video ID.
+    """
+    parsed_url = urlparse(url)
+    video_id = parse_qs(parsed_url.query).get("v", [None])[0]
+    if video_id:
+        return f"https://www.youtube.com/watch?v={video_id}"
+    return None
+
+
+def increment_link(links, url, current=False):
+    cleaned_url = clean_url(url)
+    if cleaned_url:
+        if cleaned_url in links:
+            if current:
+                # Increment visits only
+                links[cleaned_url] = (links[cleaned_url][0] + 1, links[cleaned_url][1])
+            else:
+                # Increment seen count only
+                links[cleaned_url] = (links[cleaned_url][0], links[cleaned_url][1] + 1)
+        else:
+            links[cleaned_url] = (1, 0) if current else (0, 1)
     return links
 
 
@@ -184,12 +204,12 @@ def is_browser_open(driver):
         # Attempt a non-intrusive command to check browser status
         _ = driver.current_url
         return True
-    except WebDriverException:
-        # If a WebDriverException is raised, assume the browser is closed
+    except (WebDriverException, NoSuchWindowException):
+        # If a WebDriverException or NoSuchWindowException is raised, assume the browser is closed
         return False
 
 
-def scrape_links(driver, links, check_interval=2):
+def drive_mode(driver, links, check_interval=2):
     """
     Scrape links with a periodic check within the current page, adding unseen links to the links dictionary.
 
@@ -198,15 +218,15 @@ def scrape_links(driver, links, check_interval=2):
         links: Dictionary of links to be updated.
         check_interval: Interval (in seconds) to wait between checks for new links.
     """
-    previous_hrefs = set()  # Tracks hrefs found in the previous iteration
-    last_incremented_url = (
-        None  # Tracks the last URL for which the link count was incremented
-    )
+    session_active = True
+    previous_hrefs = set()
+    last_incremented_url = None
 
     try:
-        while True:
+        while session_active:
             if not is_browser_open(driver):
-                print("Browser window is closed. Exiting loop.")
+                logging.info("Browser window is closed. Exiting loop.")
+                session_active = False
                 break
 
             current_url = driver.current_url
@@ -234,34 +254,111 @@ def scrape_links(driver, links, check_interval=2):
             for href in new_hrefs:
                 links = increment_link(links, href, current=False)
 
-            # Prepare for the next iteration
+            save_links(links)
+
             previous_hrefs = hrefs
-
-            save_links(links)  # Persist the updated links dictionary
-
             time.sleep(check_interval)  # Wait before checking the page again
 
     except WebDriverException as e:
-        print(f"A WebDriver error occurred: {e.__class__.__name__}: {e}")
+        logging.error(f"A WebDriver error occurred: {e.__class__.__name__}: {e}")
         traceback.print_exc()
     except KeyboardInterrupt:
-        print("Script interrupted by user.")
+        logging.error("Script interrupted by user.")
+        session_active = False
     except Exception as e:
-        print(f"An unexpected error occurred: {e.__class__.__name__}: {e}")
+        logging.error(f"An unexpected error occurred: {e.__class__.__name__}: {e}")
         traceback.print_exc()
+
+    return session_active
+
+
+def random_mode(driver, links, max_duration=14400):
+    """
+    Randomly navigate through YouTube links and related videos.
+
+    Args:
+        driver: Selenium WebDriver instance.
+        links: Dictionary to store the collected links.
+        max_duration: Maximum duration in seconds to run the random mode (default: 14400).
+    """
+    session_active = True  # Initialize the session_active flag
+    start_time = time.time()
+    current_url = ""
+
+    try:
+        while session_active and time.time() - start_time < max_duration:
+            if not is_browser_open(driver):
+                logging.info("Browser window is closed. Exiting loop.")
+                session_active = False
+                break
+
+            # Perform a random number of human-like scrolls
+            num_scrolls = random.randint(3, 6)
+            for _ in range(num_scrolls):
+                scroll_amount = random.randint(200, 400)
+                driver.execute_script(f"window.scrollBy(0, {scroll_amount});")
+                time.sleep(random.uniform(0.5, 1.5))
+
+            # Find and click on a random related video link
+            related_links = driver.find_elements(
+                By.XPATH, "//a[contains(@href, '/watch?v=')]"
+            )
+
+            if related_links:
+                # Increment seen count for all collected links
+                for link in related_links:
+                    link_href = link.get_attribute("href")
+                    increment_link(links, link_href)
+
+                # Save the updated links dictionary
+                save_links(links)
+
+                # Select a totally random link and navigate to it
+                current_url = random.choice(list(links))
+                logging.info(f"Navigating: {current_url}")
+                driver.get(current_url)
+                increment_link(links, current_url, current=True)
+
+                time.sleep(random.uniform(2, 4))
+            else:
+                logging.warning(
+                    f"No related links found on {current_url}. Reloading..."
+                )
+                driver.refresh()
+
+    except KeyboardInterrupt:
+        logging.error("Script interrupted by user.")
+        session_active = False
+    except Exception as e:
+        logging.error(f"Error occurred: {str(e)}. Reloading...")
+        driver.refresh()
+
+    logging.info("Random mode completed.")
+    return session_active
 
 
 def main():
     links = load_links()
+
+    if ask_user_permission("Enter random mode? [y/n]"):
+        mode = "random"
+    else:
+        mode = "drive"
+
     chromedriver_path = setup_chrome_driver()
     driver = setup_browser(chromedriver_path)
 
-    driver.get("https://www.youtube.com")
-    try:
-        scrape_links(driver, links)
-    finally:
-        save_links(links)  # Ensure links are saved before exiting
-        print("Driver exiting...")
+    if mode == "drive":
+        # Scrape links while driving
+        driver.get("https://www.youtube.com")
+        drive_mode(driver, links)
+    else:
+        # Random mode
+        driver.get("https://www.youtube.com/trending")
+        random_mode(driver, links)
+
+    logging.INFO("Driver exiting...")
+    driver.quit()
 
 
 if __name__ == "__main__":
