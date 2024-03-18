@@ -1,4 +1,5 @@
 import asyncio
+import os
 import random
 import subprocess
 import tempfile
@@ -57,12 +58,13 @@ async def download_media(link, min_dur, max_dur, temp_dir):
     cur_dur = random.randint(min_dur, max_dur)
 
     # Use yt-dlp to fetch video info only, no immediate download
+    audio_format = "opus"
     ydl_opts = {
         "format": "bestaudio",
         "extractaudio": True,
-        "audioformat": "flac",
         "noplaylist": True,
         "quiet": True,
+        "audioformat": audio_format,
     }
 
     try:
@@ -107,7 +109,7 @@ async def download_media(link, min_dur, max_dur, temp_dir):
         return None, None, None
 
     output = tempfile.NamedTemporaryFile(
-        suffix=".flac", dir=temp_dir.name, delete=False
+        suffix=f".{audio_format}", dir=temp_dir.name, delete=False
     )
 
     # Directly download and trim the audio with FFmpeg
@@ -136,4 +138,6 @@ async def download_media(link, min_dur, max_dur, temp_dir):
         output.close()
         return None, None, None
 
+    file_size = round(os.path.getsize(output.name) / (1024 * 1024), 2)
+    logger_dl.info(f"=> {file_size}mb")
     return output, cur_dur, thumb_path

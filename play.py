@@ -69,12 +69,15 @@ class AudioPlayer:
             pan_val = i / self.player_count + (1 / (2 * self.player_count))
             self.pan_vals.append(pan_val)
 
+            # Fade in/out
             adsr = Adsr(attack=0.75, decay=0, sustain=1, release=3)
             self.adsrs.append(adsr)
 
+            # Player
             player = SfPlayer(self.source_dir + "empty.wav", speed=1, mul=adsr)
             self.players.append(player)
 
+            # Panner
             panner = Pan(player, pan=self.pan_vals[i], spread=0.25)
             self.panners.append(panner)
 
@@ -114,8 +117,7 @@ class AudioPlayer:
             base, interact = (
                 (seen, self.max_seen) if visited == 0 else (visited, self.max_visit)
             )
-            # Apply max to ensure base is at least 2, making the log function valid
-            interact = max(1, interact)
+            interact = max(1, interact)  # Catch in case
             mul_range, mul_min = 0.5, 0.5
 
             return (math.log(base + 1, interact) * mul_range) + mul_min
@@ -172,8 +174,11 @@ class AudioPlayer:
         return True
 
     async def run(self):
-        self.setup_audio_environment()
-        self.play_audio()
+        try:
+            self.setup_audio_environment()
+            self.play_audio()
+        except Exception as e:
+            raise Exception("Pyo server couldn't start") from e
 
         try:
             while True:
