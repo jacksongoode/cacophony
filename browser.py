@@ -1,3 +1,5 @@
+#!.venv/bin/python
+
 import logging
 import os
 import platform
