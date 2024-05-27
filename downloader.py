@@ -67,46 +67,58 @@ async def download_media(link, min_dur, max_dur, temp_dir):
         "audioformat": audio_format,
     }
 
-    try:
-
-        def extract_info_sync(ydl_opts, link):
+    def extract_info_sync(ydl_opts, link):
+        try:
             with yt_dlp.YoutubeDL(ydl_opts) as ydl:
                 return ydl.extract_info(link, download=False)
+        except DownloadError as e:
+            logger_dl.error(f"✗ DownloadError in extracting info: {e}")
+            return None
+        except Exception as e:
+            logger_dl.error(f"✗ Unexpected error in extracting info: {e}")
+            return None
 
-        info_dict = await asyncio.to_thread(extract_info_sync, ydl_opts, link)
-
-        if "entries" in info_dict:  # Verify it's not a playlist
-            logger_dl.error("Playlists are not supported.")
-            return None, None, None
-
-        if info_dict.get("is_live"):
-            logger_dl.error("Live streams cannot be processed.")
-            return None, None, None
-
-        duration = info_dict.get("duration")
-        if not duration or duration < min_dur:
-            logger_dl.warning("The video is too short or is a live stream; skipping.")
-            return None, None, None
-
-        cur_start = random.randint(0, max(0, duration - cur_dur))
-        download_url = info_dict["url"]
-
-        # Download the thumbnail
-        thumbnail_url = info_dict.get("thumbnail", None)
-        if thumbnail_url:
-            thumbnail_url = (
-                "/".join(thumbnail_url.rsplit("/", 1)[:-1]) + "/hqdefault.jpg"
-            )
-            thumb_path = await download_thumbnail(thumbnail_url)
-        else:
-            thumb_path = None
-
-    except DownloadError as e:
-        logger_dl.error(f"Failed to download {link}: {e}")
+    info_dict = await asyncio.to_thread(extract_info_sync, ydl_opts, link)
+    if info_dict is None:
         return None, None, None
-    except Exception as e:
-        logger_dl.error(f"Unexpected error {e} when processing {link}.")
+
+    if "entries" in info_dict:  # Verify it's not a playlist
+        logger_dl.error("Playlists are not supported.")
         return None, None, None
+
+    if info_dict.get("is_live"):
+        logger_dl.error("Live streams cannot be processed.")
+        return None, None, None
+
+    duration = info_dict.get("duration")
+    if not duration or duration < min_dur:
+        logger_dl.warning("The video is too short or is a live stream; skipping.")
+        return None, None, None
+
+    cur_start = random.randint(0, max(0, duration - cur_dur))
+
+    download_url = info_dict.get("url")
+    if not download_url:
+        logger_dl.warning("No direct download URL found, attempting DASH audio stream.")
+        for format_info in info_dict.get("formats", []):
+            if (
+                format_info.get("acodec") != "none"
+                and format_info.get("vcodec") == "none"
+            ):
+                download_url = format_info.get("url")
+                break
+
+    if not download_url:
+        logger_dl.error("No suitable audio URL found.")
+        return None, None, None
+
+    # Download the thumbnail
+    thumbnail_url = info_dict.get("thumbnail", None)
+    if thumbnail_url:
+        thumbnail_url = "/".join(thumbnail_url.rsplit("/", 1)[:-1]) + "/hqdefault.jpg"
+        thumb_path = await download_thumbnail(thumbnail_url)
+    else:
+        thumb_path = None
 
     output = tempfile.NamedTemporaryFile(
         suffix=f".{audio_format}", dir=temp_dir.name, delete=False

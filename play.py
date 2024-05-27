@@ -157,6 +157,7 @@ class AudioPlayer:
             amp = calculate_amplitude(seen, visited)
             self.panners[player].set(attr="mul", value=amp, port=0.5)
             logging.info(f"Amp: {amp}")
+            logging.info(f"Pan: {self.panners[player]._pan}")
 
             self.players[player].play()
             self.adsrs[player].play()
