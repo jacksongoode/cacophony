@@ -26,7 +26,7 @@ async def choose_media(link_dict, player_num, min_dur, max_dur, q_dl, q_pyo):
             )
 
             if output is not None:
-                q_dl.put((output.name, seen, visited, player, thumb_path))
+                await q_dl.put((output.name, seen, visited, player, thumb_path))
                 logger_dl.info(f"✓ Completed: {link}")
         except Exception as e:
             logger_dl.error(f"✗ Error preloading media: {e}")
@@ -48,6 +48,7 @@ async def choose_media(link_dict, player_num, min_dur, max_dur, q_dl, q_pyo):
             await asyncio.sleep(0.1)
 
     await asyncio.gather(*tasks)
+    temp_dir.cleanup()
 
 
 async def download_media(link, min_dur, max_dur, temp_dir):
@@ -115,7 +116,7 @@ async def download_media(link, min_dur, max_dur, temp_dir):
     # Download the thumbnail
     thumbnail_url = info_dict.get("thumbnail", None)
     if thumbnail_url:
-        thumbnail_url = "/".join(thumbnail_url.rsplit("/", 1)[:-1]) + "/hqdefault.jpg"
+        # thumbnail_url = "/".join(thumbnail_url.rsplit("/", 1)[:-1]) + "/hqdefault.jpg"
         thumb_path = await download_thumbnail(thumbnail_url)
     else:
         thumb_path = None

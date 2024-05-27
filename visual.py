@@ -1,4 +1,4 @@
-import asyncio
+import logging
 import os
 import tempfile
 from contextlib import contextmanager
@@ -16,10 +16,12 @@ async def download_thumbnail(url):
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             if response.status != 200:
+                # logging.error(f"Failed to download thumbnail: {url}")
                 return None
             with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
                 async for chunk in response.content.iter_chunked(1024):
                     tmp_file.write(chunk)
+                # logging.info(f"Downloaded thumbnail: {url}")
                 return tmp_file.name
 
 
@@ -43,40 +45,42 @@ def temporary_image_file(suffix=".jpg"):
 
 
 async def display_thumbnail(thumbnail_path, stop_event):
-    if thumbnail_path is None:
-        return
+    try:
+        if thumbnail_path is None:
+            # logging.error("No thumbnail path provided.")
+            return
 
-    image = blur_image(thumbnail_path)
+        # logging.info(f"Preparing to display thumbnail: {thumbnail_path}")
+        image = blur_image(thumbnail_path)
 
-    with temporary_image_file() as prev_thumbnail_path:
-        if os.path.exists(".thumbnail.jpg"):
-            os.rename(".thumbnail.jpg", prev_thumbnail_path)
-        else:
-            prev_thumbnail_path = None
-
-        prev_image = cv2.imread(prev_thumbnail_path) if prev_thumbnail_path else None
-
-        window_name = "cacophony"
-        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        # cv2.setWindowProperty(window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN)
-
-        start_time = asyncio.get_event_loop().time()
-        frame_delay = 1.0 / FRAME_RATE
-        transition_complete = False
-
-        while not stop_event.is_set() and not transition_complete:
-            elapsed_time = asyncio.get_event_loop().time() - start_time
-            alpha = min(elapsed_time / TRANSITION_DURATION, 1.0)
-
-            if prev_image is not None:
-                transition_image = cv2.addWeighted(
-                    prev_image, 1.0 - alpha, image, alpha, 0
-                )
+        with temporary_image_file() as prev_thumbnail_path:
+            if os.path.exists(".thumbnail.jpg"):
+                os.rename(".thumbnail.jpg", prev_thumbnail_path)
             else:
-                transition_image = image
+                prev_thumbnail_path = None
 
-            if alpha < 1.0:
-                # Overlay the URL at the bottom left of the thumbnail only once
+            prev_image = (
+                cv2.imread(prev_thumbnail_path) if prev_thumbnail_path else None
+            )
+
+            window_name = "cacophony"
+            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+
+            start_time = monotonic()
+            frame_delay = 1.0 / FRAME_RATE
+            transition_complete = False
+
+            while not stop_event.is_set() and not transition_complete:
+                elapsed_time = monotonic() - start_time
+                alpha = min(elapsed_time / TRANSITION_DURATION, 1.0)
+
+                if prev_image is not None:
+                    transition_image = cv2.addWeighted(
+                        prev_image, 1.0 - alpha, image, alpha, 0
+                    )
+                else:
+                    transition_image = image
+
                 cv2.putText(
                     transition_image,
                     thumbnail_path,
@@ -89,7 +93,14 @@ async def display_thumbnail(thumbnail_path, stop_event):
                 )
                 cv2.imshow(window_name, transition_image)
                 cv2.waitKey(int(frame_delay * 1000))
-            else:
-                transition_complete = True
 
-        cv2.imwrite(".thumbnail.jpg", image)
+                if alpha >= 1.0:
+                    transition_complete = True
+
+            # logging.info("Transition complete or stop event set.")
+            if not stop_event.is_set():
+                cv2.imwrite(".thumbnail.jpg", image)
+                # logging.info(f"Thumbnail displayed and saved: {thumbnail_path}")
+
+    except Exception as e:
+        logging.error(f"An error occurred in display_thumbnail: {e}")

@@ -9,7 +9,6 @@ import logging
 import math
 import os
 import random
-from queue import Queue
 
 import orjson
 from pyo import EQ, Adsr, Pan, Server, SfPlayer, STRev, sndinfo
@@ -29,8 +28,8 @@ class AudioPlayer:
         self.source_dir = source_dir
 
         # Queues
-        self.q_dl = Queue()
-        self.q_pyo = Queue()
+        self.q_dl = asyncio.Queue()
+        self.q_pyo = asyncio.Queue()
 
         # Sound queue and related properties
         self.sound_queue = []
@@ -128,7 +127,7 @@ class AudioPlayer:
             print(".", end="", flush=True)
             return
 
-        self.sound_queue.append(self.q_dl.get())
+        self.sound_queue.append(await self.q_dl.get())
         sound_path, seen, visited, player, thumb_path = self.sound_queue.pop()
 
         if not os.path.exists(sound_path):
@@ -163,7 +162,7 @@ class AudioPlayer:
             self.adsrs[player].play()
 
             # Play audio file
-            self.q_pyo.put((sound_path, player))
+            await self.q_pyo.put((sound_path, player))
 
             # Show thumbnail
             asyncio.create_task(display_thumbnail(thumb_path, stop_event))
