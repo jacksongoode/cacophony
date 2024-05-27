@@ -2,6 +2,7 @@ import asyncio
 import os
 import tempfile
 from contextlib import contextmanager
+from time import monotonic
 
 import aiohttp
 import cv2
@@ -14,14 +15,12 @@ FRAME_RATE = 30
 async def download_thumbnail(url):
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
-            if response.status == 200:
-                with tempfile.NamedTemporaryFile(
-                    delete=False, suffix=".jpg"
-                ) as tmp_file:
-                    async for chunk in response.content.iter_chunked(1024):
-                        tmp_file.write(chunk)
-                    return tmp_file.name
-    return None
+            if response.status != 200:
+                return None
+            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
+                async for chunk in response.content.iter_chunked(1024):
+                    tmp_file.write(chunk)
+                return tmp_file.name
 
 
 # Apply blur effect to an image
@@ -36,9 +35,11 @@ def blur_image(image_path):
 # Context manager for temporary image files
 @contextmanager
 def temporary_image_file(suffix=".jpg"):
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as tmp_file:
+    tmp_file = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+    try:
         yield tmp_file.name
-    os.unlink(tmp_file.name)
+    finally:
+        os.unlink(tmp_file.name)
 
 
 async def display_thumbnail(thumbnail_path, stop_event):

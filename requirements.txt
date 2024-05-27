@@ -1,5 +1,0 @@
-orjson
-selenium
-pyo
-yt-dlp
-webdriver_manager
