@@ -6,7 +6,9 @@ from time import monotonic
 
 import aiohttp
 import cv2
+from screeninfo import get_monitors
 
+screen_width, screen_height = get_monitors()[0].width, get_monitors()[0].height
 TRANSITION_DURATION = 5.0
 FRAME_RATE = 30
 
@@ -25,12 +27,31 @@ async def download_thumbnail(url):
                 return tmp_file.name
 
 
+def fit_image_to_screen(image, screen_width, screen_height):
+    height, width = image.shape[:2]
+    screen_aspect = screen_width / screen_height
+    image_aspect = width / height
+
+    crop_x, crop_y = (0, 0)
+    if image_aspect > screen_aspect:
+        new_width = int(screen_aspect * height)
+        crop_x = (width - new_width) // 2
+    else:
+        new_height = int(width / screen_aspect)
+        crop_y = (height - new_height) // 2
+
+    cropped_image = image[crop_y : crop_y + height, crop_x : crop_x + width]
+    return cv2.resize(
+        cropped_image, (screen_width, screen_height), interpolation=cv2.INTER_LINEAR
+    )
+
+
 # Apply blur effect to an image
 def blur_image(image_path):
     image = cv2.imread(image_path)
     blurred = cv2.GaussianBlur(image, (0, 0), 30)
-    upscaled = cv2.resize(blurred, (1920, 1080), interpolation=cv2.INTER_LINEAR)
-    smoothed = cv2.blur(upscaled, (2, 2))
+    fitted_image = fit_image_to_screen(blurred, 1440, 900)
+    smoothed = cv2.blur(fitted_image, (2, 2))
     return smoothed
 
 
@@ -65,6 +86,9 @@ async def display_thumbnail(thumbnail_path, stop_event):
 
             window_name = "cacophony"
             cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+            cv2.setWindowProperty(
+                window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN
+            )
 
             start_time = monotonic()
             frame_delay = 1.0 / FRAME_RATE

@@ -13,6 +13,7 @@ dependencies = [
     "yt-dlp",
     "aiohttp>=3.9.5",
     "opencv-python>=4.9.0.80",
+    "screeninfo>=0.8.1",
 ]
 readme = "README.md"
 requires-python = ">= 3.8"
