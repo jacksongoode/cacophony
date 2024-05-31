@@ -1,5 +1,6 @@
 #!.venv/bin/python
 
+import argparse
 import logging
 import os
 import platform
@@ -8,7 +9,8 @@ import re
 import time
 import traceback
 import zipfile
-from urllib.parse import parse_qs, urlparse
+from datetime import datetime
+from urllib.parse import parse_qs, quote_plus, urlparse
 from urllib.request import urlretrieve
 
 import orjson
@@ -25,18 +27,28 @@ from selenium.webdriver.chrome.service import Service
 from selenium.webdriver.common.by import By
 
 
-def load_links():
+def short_now():
+    now = datetime.now()
+    formatted_time = now.strftime("%m%d%H%M")
+    return formatted_time
+
+
+def load_links(links_fn):
+    if links_fn is None:
+        links_fn = f"{short_now}-links"
+        return {}
+
     try:
-        with open("resources/links.json", "rb") as f:
+        with open(f"resources/{links_fn}.json", "rb") as f:
             return orjson.loads(f.read())
     except FileNotFoundError:
-        logging.info("No links.json found, creating anew")
+        logging.info(f"No {links_fn}.json found, creating anew!")
         return {}
 
 
-def save_links(links):
+def save_links(links, links_fn):
     os.makedirs("resources", exist_ok=True)
-    with open("resources/links.json", "wb") as f:
+    with open(f"resources/{links_fn}.json", "wb") as f:
         f.write(orjson.dumps(links))
 
 
@@ -211,7 +223,7 @@ def is_browser_open(driver):
         return False
 
 
-def drive_mode(driver, links, check_interval=2):
+def drive_mode(driver, links, links_fn, check_interval=2):
     """
     Scrape links with a periodic check within the current page, adding unseen links to the links dictionary.
 
@@ -256,7 +268,7 @@ def drive_mode(driver, links, check_interval=2):
             for href in new_hrefs:
                 links = increment_link(links, href, current=False)
 
-            save_links(links)
+            save_links(links, links_fn)
 
             previous_hrefs = hrefs
             time.sleep(check_interval)  # Wait before checking the page again
@@ -274,7 +286,7 @@ def drive_mode(driver, links, check_interval=2):
     return session_active
 
 
-def random_mode(driver, links, max_duration=14400):
+def random_mode(driver, links, links_fn, max_duration=14400):
     """
     Randomly navigate through YouTube links and related videos.
 
@@ -313,7 +325,7 @@ def random_mode(driver, links, max_duration=14400):
                     increment_link(links, link_href)
 
                 # Save the updated links dictionary
-                save_links(links)
+                save_links(links, links_fn)
 
                 # Select a totally random link and navigate to it
                 current_url = random.choice(list(links))
@@ -340,26 +352,47 @@ def random_mode(driver, links, max_duration=14400):
 
 
 def main():
-    links = load_links()
+    parser = argparse.ArgumentParser(description="Search query application")
+    parser.add_argument("-s", "--search", type=str, help="Search query string")
+    parser.add_argument(
+        "-l", "--links", type=str, help="Filename of links to load (base of .json)"
+    )
+    parser.add_argument(
+        "-m",
+        "--mode",
+        type=str,
+        default="drive",
+        help="Search query string to pass to YouTube",
+    )
 
-    if ask_user_permission("Enter random mode? [y/n]"):
-        mode = "random"
-    else:
-        mode = "drive"
+    args = parser.parse_args()
+    links = load_links(args.links)
 
     chromedriver_path = setup_chrome_driver()
     driver = setup_browser(chromedriver_path)
 
-    if mode == "drive":
+    if args.search is not None:
+        args.mode = "search"
+        args.links = args.links or args.search
+
+    if args.mode == "drive":
         # Scrape links while driving
         driver.get("https://www.youtube.com")
-        drive_mode(driver, links)
-    else:
-        # Random mode
-        driver.get("https://www.youtube.com/trending")
-        random_mode(driver, links)
+        drive_mode(driver, links, args.links)
 
-    logging.INFO("Driver exiting...")
+    elif args.mode == "search":
+        logging.info(f"Searching for {args.search}...")
+        search_term = quote_plus(args.search)
+        driver.get(f"https://www.youtube.com/results?search_query={search_term}")
+        random_mode(driver, links, args.links)
+
+    elif args.mode == "random":
+        # Random mode
+        logging.info("Looking at trending videos...")
+        driver.get("https://www.youtube.com/trending")
+        random_mode(driver, args.links)
+
+    logging.info("Driver exiting...")
     driver.quit()
 
 

@@ -2,4 +2,4 @@ __pycache__/
 .DS_Store
 .thumbnail.jpg
 drivers/
-resources/links.json
+resources/*.json

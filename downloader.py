@@ -12,14 +12,16 @@ from visual import download_thumbnail
 
 logger_dl = setup_logger("file2_logger", color_code=LogColors.DIM)
 
+DOWNLOAD_DELAY = 1
+MAX_CONCURRENCY = 5
+
 
 async def choose_media(link_dict, player_num, min_dur, max_dur, q_dl, q_pyo):
     temp_dir = tempfile.TemporaryDirectory()
-    max_concurrency = 3
 
     async def preload_media_async(link, seen, visited, player):
         try:
-            await asyncio.sleep(random.random() * 2)
+            await asyncio.sleep(random.random() * DOWNLOAD_DELAY)
             logger_dl.info(f"↓ Downloading: {link}")
             output, cur_dur, thumb_path = await download_media(
                 link, min_dur, max_dur, temp_dir
@@ -33,7 +35,7 @@ async def choose_media(link_dict, player_num, min_dur, max_dur, q_dl, q_pyo):
 
     tasks = []
     while len(link_dict) > 0:
-        if len(tasks) < max_concurrency and q_dl.qsize() < 5:
+        if len(tasks) < MAX_CONCURRENCY and q_dl.qsize() < 5:
             rnd_link = random.choice(list(link_dict.items()))
             link, (seen, visited) = rnd_link
             del link_dict[link]

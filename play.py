@@ -9,6 +9,7 @@ import logging
 import math
 import os
 import random
+import time
 
 import orjson
 from pyo import EQ, Adsr, Pan, Server, SfPlayer, STRev, sndinfo
@@ -43,6 +44,7 @@ class AudioPlayer:
         self.pan_vals = []
         self.verbs = None
         self.eq = None
+        self.currently_playing = {}
 
         # Server properties
         self.server = Server(nchnls=2, buffersize=1024, duplex=0)
@@ -91,7 +93,21 @@ class AudioPlayer:
             roomSize=3,
             firstRefGain=-18,
         )
-        self.eq = EQ(self.verbs, freq=180, boost=-12.0, type=1).out()
+        self.eq = EQ(self.verbs, freq=800, boost=-8.0, type=0).out()
+        self.eq = EQ(self.eq, freq=120, boost=-12.0, type=1).out()
+
+    def get_available_player(self):
+        print("Current players:", self.currently_playing)
+        available_players = [
+            p for p in range(self.player_count) if p not in self.currently_playing
+        ]
+
+        if available_players:
+            return random.choice(available_players)
+
+        # If no available players, get the player with the oldest end time
+        oldest_player = min(self.currently_playing, key=self.currently_playing.get)
+        return oldest_player
 
     def play_audio(self):
         self.server.start()
@@ -128,7 +144,8 @@ class AudioPlayer:
             return
 
         self.sound_queue.append(await self.q_dl.get())
-        sound_path, seen, visited, player, thumb_path = self.sound_queue.pop()
+        sound_path, seen, visited, _, thumb_path = self.sound_queue.pop()
+        player = self.get_available_player()
 
         if not os.path.exists(sound_path):
             logging.warning(f"File does not exist: {sound_path}")
@@ -163,6 +180,10 @@ class AudioPlayer:
 
             # Play audio file
             await self.q_pyo.put((sound_path, player))
+
+            # Add player and duration when starting sound
+            end_time = time.time() + new_dur
+            self.currently_playing[player] = end_time
 
             # Show thumbnail
             asyncio.create_task(display_thumbnail(thumb_path, stop_event))
@@ -208,7 +229,13 @@ class AudioPlayer:
 async def main():
     parser = argparse.ArgumentParser()
     parser.add_argument(
-        "-p", "--players", type=int, default=16, help="number of concurrent players"
+        "-p", "--players", type=int, default=16, help="Number of concurrent players"
+    )
+    parser.add_argument(
+        "-l",
+        "--links",
+        type=str,
+        help="Filename of links to load (base of .json)",
     )
     args = parser.parse_args()
 
@@ -219,7 +246,7 @@ async def main():
         source_dir="./sounds/",
     )
 
-    link_dict = audio_player.load_links("resources/links.json")
+    link_dict = audio_player.load_links(f"resources/{args.links}.json")
 
     audio_player_task = asyncio.create_task(audio_player.run())
     download_task = asyncio.create_task(
