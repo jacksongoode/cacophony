@@ -12,7 +12,7 @@ import random
 import time
 
 import orjson
-from pyo import EQ, Adsr, Pan, Server, SfPlayer, STRev, sndinfo
+from pyo import EQ, Adsr, Freeverb, Mix, Pan, Server, SfPlayer, SPan, STRev, sndinfo
 
 from downloader import choose_media
 from visual import display_thumbnail
@@ -47,8 +47,7 @@ class AudioPlayer:
         self.currently_playing = {}
 
         # Server properties
-        self.server = Server(nchnls=2, buffersize=1024, duplex=0)
-        self.warm_up_duration = 5
+        self.server = Server(nchnls=5, buffersize=1024, duplex=0)
 
         # Tracking properties
         self.max_seen = 0
@@ -70,6 +69,8 @@ class AudioPlayer:
         # Create players, panners, and set up effects
         for i in range(self.player_count):
             pan_val = i / self.player_count + (1 / (2 * self.player_count))
+            pan_val = pan_val * 0.8
+
             self.pan_vals.append(pan_val)
 
             # Fade in/out
@@ -81,23 +82,23 @@ class AudioPlayer:
             self.players.append(player)
 
             # Panner
-            panner = Pan(player, pan=self.pan_vals[i], spread=0.25)
+            panner = Pan(player, outs=5, pan=pan_val, spread=0.15).out()
             self.panners.append(panner)
 
-        self.verbs = STRev(
-            self.panners,
-            inpos=self.pan_vals,
-            revtime=2.1,
-            cutoff=6000,
-            bal=0.5,
-            roomSize=3,
-            firstRefGain=-18,
-        )
-        self.eq = EQ(self.verbs, freq=800, boost=-8.0, type=0).out()
-        self.eq = EQ(self.eq, freq=120, boost=-12.0, type=1).out()
+        # self.verbs = STRev(
+        #     self.panners,
+        #     inpos=self.pan_vals,
+        #     revtime=2.1,
+        #     cutoff=6000,
+        #     bal=0.5,
+        #     roomSize=3,
+        #     firstRefGain=-18,
+        # )
+        # mix = Mix(self.panners, voices=5).out()
+        # self.eq = EQ(mix, freq=800, boost=-8.0, type=0).out()
+        # self.eq = EQ(self.eq, freq=120, boost=-12.0, type=1).out()
 
     def get_available_player(self):
-        print("Current players:", self.currently_playing)
         available_players = [
             p for p in range(self.player_count) if p not in self.currently_playing
         ]
