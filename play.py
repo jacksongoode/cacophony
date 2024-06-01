@@ -12,7 +12,7 @@ import random
 import time
 
 import orjson
-from pyo import EQ, Adsr, Freeverb, Mix, Pan, Server, SfPlayer, SPan, STRev, sndinfo
+from pyo import Adsr, Pan, Server, SfPlayer, sndinfo
 
 from downloader import choose_media
 from visual import display_thumbnail
@@ -122,9 +122,7 @@ class AudioPlayer:
     async def pyo_look(self):
         def handle_sound_info(output):
             try:
-                file_info = sndinfo(output)
-                if file_info is None:
-                    raise ValueError("Failed to get sound info.")
+                file_info = sndinfo(output, raise_on_failure=True)
                 return file_info[1]
             except Exception as e:
                 logging.error(f"Error getting sound info: {e}")
@@ -145,7 +143,7 @@ class AudioPlayer:
             return
 
         self.sound_queue.append(await self.q_dl.get())
-        sound_path, seen, visited, _, thumb_path = self.sound_queue.pop()
+        sound_path, seen, visited, _, thumb_data, info_dict = self.sound_queue.pop()
         player = self.get_available_player()
 
         if not os.path.exists(sound_path):
@@ -187,7 +185,7 @@ class AudioPlayer:
             self.currently_playing[player] = end_time
 
             # Show thumbnail
-            asyncio.create_task(display_thumbnail(thumb_path, stop_event))
+            asyncio.create_task(display_thumbnail(thumb_data, info_dict, stop_event))
 
         if self.switch and not self.switch.done():
             stop_event.set()

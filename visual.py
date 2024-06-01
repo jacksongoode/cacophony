@@ -6,6 +6,7 @@ from time import monotonic
 
 import aiohttp
 import cv2
+import numpy as np
 from screeninfo import get_monitors
 
 screen_width, screen_height = get_monitors()[0].width, get_monitors()[0].height
@@ -18,13 +19,11 @@ async def download_thumbnail(url):
     async with aiohttp.ClientSession() as session:
         async with session.get(url) as response:
             if response.status != 200:
-                # logging.error(f"Failed to download thumbnail: {url}")
+                logging.error(f"Failed to download thumbnail: {url}")
                 return None
-            with tempfile.NamedTemporaryFile(delete=False, suffix=".jpg") as tmp_file:
-                async for chunk in response.content.iter_chunked(1024):
-                    tmp_file.write(chunk)
-                # logging.info(f"Downloaded thumbnail: {url}")
-                return tmp_file.name
+            thumb_data = await response.read()
+            # logging.info(f"Downloaded thumbnail: {url}")
+            return thumb_data
 
 
 def fit_image_to_screen(image, screen_width, screen_height):
@@ -47,10 +46,13 @@ def fit_image_to_screen(image, screen_width, screen_height):
 
 
 # Apply blur effect to an image
-def blur_image(image_path):
-    image = cv2.imread(image_path)
+def blur_image(image_data):
+    np_array = np.frombuffer(image_data, np.uint8)
+    image = cv2.imdecode(np_array, cv2.IMREAD_COLOR)
     blurred = cv2.GaussianBlur(image, (0, 0), 30)
-    fitted_image = fit_image_to_screen(blurred, 1440, 900)
+    fitted_image = fit_image_to_screen(
+        blurred, 1440, 900
+    )  # make 1920x1080 for projection
     smoothed = cv2.blur(fitted_image, (2, 2))
     return smoothed
 
@@ -65,66 +67,60 @@ def temporary_image_file(suffix=".jpg"):
         os.unlink(tmp_file.name)
 
 
-async def display_thumbnail(thumbnail_path, stop_event):
+async def display_thumbnail(image_data, info_dict, stop_event):
     try:
-        if thumbnail_path is None:
-            # logging.error("No thumbnail path provided.")
+        if image_data is None:
+            logging.error("No image data provided.")
             return
 
-        # logging.info(f"Preparing to display thumbnail: {thumbnail_path}")
-        image = blur_image(thumbnail_path)
+        # logging.info("Preparing to display thumbnail")
+        image = blur_image(image_data)
 
-        with temporary_image_file() as prev_thumbnail_path:
-            if os.path.exists(".thumbnail.jpg"):
-                os.rename(".thumbnail.jpg", prev_thumbnail_path)
-            else:
-                prev_thumbnail_path = None
+        # Placeholder for transition logic:
+        prev_image = getattr(display_thumbnail, "prev_image", None)
+        display_thumbnail.prev_image = prev_image
 
-            prev_image = (
-                cv2.imread(prev_thumbnail_path) if prev_thumbnail_path else None
-            )
+        window_name = "cacophony"
+        cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
+        cv2.setWindowProperty(
+            window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN
+        )
 
-            window_name = "cacophony"
-            cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-            cv2.setWindowProperty(
-                window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN
-            )
+        start_time = monotonic()
+        frame_delay = 1.0 / FRAME_RATE
+        transition_complete = False
 
-            start_time = monotonic()
-            frame_delay = 1.0 / FRAME_RATE
-            transition_complete = False
+        while not stop_event.is_set() and not transition_complete:
+            elapsed_time = monotonic() - start_time
+            alpha = min(elapsed_time / TRANSITION_DURATION, 1.0)
 
-            while not stop_event.is_set() and not transition_complete:
-                elapsed_time = monotonic() - start_time
-                alpha = min(elapsed_time / TRANSITION_DURATION, 1.0)
-
-                if prev_image is not None:
-                    transition_image = cv2.addWeighted(
-                        prev_image, 1.0 - alpha, image, alpha, 0
-                    )
-                else:
-                    transition_image = image
-
-                cv2.putText(
-                    transition_image,
-                    thumbnail_path,
-                    (10, transition_image.shape[0] - 10),
-                    cv2.FONT_HERSHEY_SIMPLEX,
-                    1,
-                    (255, 255, 255),
-                    1,
-                    cv2.LINE_AA,
+            if prev_image is not None:
+                transition_image = cv2.addWeighted(
+                    prev_image, 1.0 - alpha, image, alpha, 0
                 )
-                cv2.imshow(window_name, transition_image)
-                cv2.waitKey(int(frame_delay * 1000))
+            else:
+                transition_image = image
 
-                if alpha >= 1.0:
-                    transition_complete = True
+            cv2.putText(
+                transition_image,
+                info_dict["link"].split("https://www.")[-1],
+                (10, transition_image.shape[0] - 10),
+                cv2.FONT_HERSHEY_SIMPLEX,
+                1,
+                (255, 255, 255),
+                1,
+                cv2.LINE_AA,
+            )
+            cv2.imshow(window_name, transition_image)
+            cv2.waitKey(int(frame_delay * 1000))
 
-            # logging.info("Transition complete or stop event set.")
-            if not stop_event.is_set():
-                cv2.imwrite(".thumbnail.jpg", image)
-                # logging.info(f"Thumbnail displayed and saved: {thumbnail_path}")
+            if alpha >= 1.0:
+                transition_complete = True
+
+        # logging.info("Transition complete or stop event set.")
+
+        if not stop_event.is_set():
+            display_thumbnail.prev_image = image
 
     except Exception as e:
         logging.error(f"An error occurred in display_thumbnail: {e}")

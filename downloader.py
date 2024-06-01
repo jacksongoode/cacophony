@@ -12,7 +12,7 @@ from visual import download_thumbnail
 
 logger_dl = setup_logger("file2_logger", color_code=LogColors.DIM)
 
-DOWNLOAD_DELAY = 1
+DOWNLOAD_DELAY = 5
 MAX_CONCURRENCY = 5
 
 
@@ -23,12 +23,15 @@ async def choose_media(link_dict, player_num, min_dur, max_dur, q_dl, q_pyo):
         try:
             await asyncio.sleep(random.random() * DOWNLOAD_DELAY)
             logger_dl.info(f"↓ Downloading: {link}")
-            output, cur_dur, thumb_path = await download_media(
+            output, cur_dur, thumb_data = await download_media(
                 link, min_dur, max_dur, temp_dir
             )
 
             if output is not None:
-                await q_dl.put((output.name, seen, visited, player, thumb_path))
+                info_dict = {"link": link}
+                await q_dl.put(
+                    (output.name, seen, visited, player, thumb_data, info_dict)
+                )
                 logger_dl.info(f"✓ Completed: {link}")
         except Exception as e:
             logger_dl.error(f"✗ Error preloading media: {e}")
@@ -116,12 +119,11 @@ async def download_media(link, min_dur, max_dur, temp_dir):
         return None, None, None
 
     # Download the thumbnail
+    thumb_data = None
     thumbnail_url = info_dict.get("thumbnail", None)
     if thumbnail_url:
         # thumbnail_url = "/".join(thumbnail_url.rsplit("/", 1)[:-1]) + "/hqdefault.jpg"
-        thumb_path = await download_thumbnail(thumbnail_url)
-    else:
-        thumb_path = None
+        thumb_data = await download_thumbnail(thumbnail_url)
 
     output = tempfile.NamedTemporaryFile(
         suffix=f".{audio_format}", dir=temp_dir.name, delete=False
@@ -155,4 +157,4 @@ async def download_media(link, min_dur, max_dur, temp_dir):
 
     file_size = round(os.path.getsize(output.name) / (1024 * 1024), 2)
     logger_dl.info(f"=> {file_size}mb")
-    return output, cur_dur, thumb_path
+    return output, cur_dur, thumb_data
