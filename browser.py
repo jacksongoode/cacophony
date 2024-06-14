@@ -355,7 +355,7 @@ def main():
     parser = argparse.ArgumentParser(description="Search query application")
     parser.add_argument("-s", "--search", type=str, help="Search query string")
     parser.add_argument(
-        "-l", "--links", type=str, help="Filename of links to load (base of .json)"
+        "-l", "--links-fn", type=str, help="Filename of links to load (base of .json)"
     )
     parser.add_argument(
         "-m",
@@ -366,31 +366,34 @@ def main():
     )
 
     args = parser.parse_args()
-    links = load_links(args.links)
+
+    # Load previous links to contiue
+    links = load_links(args.links_fn)
 
     chromedriver_path = setup_chrome_driver()
     driver = setup_browser(chromedriver_path)
 
     if args.search is not None:
         args.mode = "search"
-        args.links = args.links or args.search
+        # Set file name to save as search term or links json
+        args.links_fn = args.links_fn or args.search
 
     if args.mode == "drive":
         # Scrape links while driving
         driver.get("https://www.youtube.com")
-        drive_mode(driver, links, args.links)
+        drive_mode(driver, links, args.links_fn)
 
     elif args.mode == "search":
         logging.info(f"Searching for {args.search}...")
         search_term = quote_plus(args.search)
         driver.get(f"https://www.youtube.com/results?search_query={search_term}")
-        random_mode(driver, links, args.links)
+        random_mode(driver, links, args.links_fn)
 
-    elif args.mode == "random":
+    elif args.mode == "trending":
         # Random mode
         logging.info("Looking at trending videos...")
         driver.get("https://www.youtube.com/trending")
-        random_mode(driver, args.links)
+        random_mode(driver, links, args.links_fn)
 
     logging.info("Driver exiting...")
     driver.quit()

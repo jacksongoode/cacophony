@@ -78,25 +78,22 @@ class AudioPlayer:
             self.adsrs.append(adsr)
 
             # Player
-            player = SfPlayer(self.source_dir + "empty.wav", speed=1, mul=adsr)
+            player = SfPlayer(self.source_dir + "empty.wav", speed=1, mul=self.adsrs[i])
             self.players.append(player)
 
             # Panner
-            panner = Pan(player, outs=5, pan=pan_val, spread=0.15).out()
+            panner = Pan(self.players[i], outs=5, pan=self.pan_vals[i], spread=0.15)
             self.panners.append(panner)
 
-        # self.verbs = STRev(
-        #     self.panners,
-        #     inpos=self.pan_vals,
-        #     revtime=2.1,
-        #     cutoff=6000,
-        #     bal=0.5,
-        #     roomSize=3,
-        #     firstRefGain=-18,
-        # )
-        # mix = Mix(self.panners, voices=5).out()
-        # self.eq = EQ(mix, freq=800, boost=-8.0, type=0).out()
-        # self.eq = EQ(self.eq, freq=120, boost=-12.0, type=1).out()
+        self.verbs = STRev(
+            self.panners,
+            inpos=self.pan_vals,
+            revtime=2.1,
+            cutoff=6000,
+            bal=0.5,
+            roomSize=3,
+            firstRefGain=-18,
+        )
 
     def get_available_player(self):
         available_players = [
@@ -240,8 +237,8 @@ async def main():
 
     audio_player = AudioPlayer(
         player_count=args.players,
-        min_duration=8,
-        max_duration=32,
+        min_duration=12,
+        max_duration=36,
         source_dir="./sounds/",
     )
 
