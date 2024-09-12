@@ -12,7 +12,7 @@ import random
 import time
 
 import orjson
-from pyo import Adsr, Pan, Server, SfPlayer, sndinfo
+from pyo import EQ, Adsr, Pan, Server, SfPlayer, STRev, sndinfo
 
 from downloader import choose_media
 from visual import display_thumbnail
@@ -47,7 +47,7 @@ class AudioPlayer:
         self.currently_playing = {}
 
         # Server properties
-        self.server = Server(nchnls=5, buffersize=1024, duplex=0)
+        self.server = Server(nchnls=2, buffersize=1024, duplex=0)
 
         # Tracking properties
         self.max_seen = 0
@@ -82,7 +82,7 @@ class AudioPlayer:
             self.players.append(player)
 
             # Panner
-            panner = Pan(self.players[i], outs=5, pan=self.pan_vals[i], spread=0.15)
+            panner = Pan(self.players[i], outs=2, pan=self.pan_vals[i], spread=0.15)
             self.panners.append(panner)
 
         self.verbs = STRev(
@@ -94,6 +94,10 @@ class AudioPlayer:
             roomSize=3,
             firstRefGain=-18,
         )
+
+        # Cut common mid-range and lowend
+        self.eq = EQ(self.verbs, freq=1000, boost=-4.0, type=0).out()
+        self.eq = EQ(self.eq, freq=120, boost=-12.0, type=1).out()
 
     def get_available_player(self):
         available_players = [

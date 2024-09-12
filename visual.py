@@ -82,9 +82,12 @@ async def display_thumbnail(image_data, info_dict, stop_event):
 
         window_name = "cacophony"
         cv2.namedWindow(window_name, cv2.WINDOW_NORMAL)
-        cv2.setWindowProperty(
-            window_name, cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN
-        )
+
+        # Fullscreen display
+        # cv2.setWindowProperty(
+        #     window_name,
+        #     cv2.WND_PROP_FULLSCREEN, cv2.WINDOW_FULLSCREEN
+        # )
 
         start_time = monotonic()
         frame_delay = 1.0 / FRAME_RATE
